@@ -1,0 +1,1277 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Алексей Кед · 3D-скульптура и моделирование</title>
+<meta name="description" content="Алексей Кед. 3D-художник из Минска. Интерактивный просмотр моделей и топологии в браузере.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Unbounded:wght@500;700&family=Golos+Text:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0a09;
+  --surface: rgba(22, 20, 18, 0.78);
+  --ink: #f3efe8;
+  --muted: #9e9689;
+  --dim: #5d584f;
+  --line: rgba(243, 239, 232, 0.12);
+  --line-strong: rgba(243, 239, 232, 0.28);
+  --accent: #e08b43;
+  --f-display: 'Unbounded', system-ui, sans-serif;
+  --f-sans: 'Golos Text', system-ui, sans-serif;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --pad: clamp(20px, 3.2vw, 48px);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--f-sans);
+  font-size: 15px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--bg);
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+/* ── Фоновый свет и тонкое зерно плёнки ── */
+.backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(68% 62% at var(--spot-x, 54%) var(--spot-y, 44%), rgba(224, 139, 67, 0.11) 0%, rgba(180, 120, 74, 0.04) 42%, transparent 74%),
+    radial-gradient(95% 80% at 50% 100%, #171411 0%, #0b0a09 72%);
+  transition: opacity 600ms var(--ease-out);
+}
+
+.grain {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  opacity: 0.032;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='160' height='160' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ── Единая 3D-сцена на весь экран ── */
+#stage {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  cursor: grab;
+  touch-action: none;
+}
+#stage:active {
+  cursor: grabbing;
+}
+#stage canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ── Архитектурное перекрестие и направляющие ── */
+.reticle {
+  position: fixed;
+  inset: var(--pad);
+  z-index: 2;
+  pointer-events: none;
+  border: 1px solid rgba(243, 239, 232, 0.06);
+}
+.reticle::before,
+.reticle::after {
+  content: '';
+  position: absolute;
+  background: rgba(243, 239, 232, 0.24);
+}
+.reticle::before {
+  top: -1px;
+  left: -1px;
+  width: 12px;
+  height: 1px;
+  box-shadow: calc(100vw - var(--pad) * 2 - 12px) 0 0 rgba(243, 239, 232, 0.24);
+}
+.reticle::after {
+  bottom: -1px;
+  left: -1px;
+  width: 12px;
+  height: 1px;
+  box-shadow: calc(100vw - var(--pad) * 2 - 12px) 0 0 rgba(243, 239, 232, 0.24);
+}
+
+/* ── Верхний пояс: имя автора и прямое переключение работ ── */
+.topbar {
+  position: fixed;
+  top: var(--pad);
+  left: var(--pad);
+  right: var(--pad);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 14px 20px;
+  pointer-events: none;
+}
+
+.brand {
+  pointer-events: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  text-decoration: none;
+  color: var(--ink);
+}
+.brand-name {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: clamp(0.95rem, 1.25vw, 1.15rem);
+  letter-spacing: -0.02em;
+}
+.brand-meta {
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.work-tabs {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.work-tab {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-family: var(--f-sans);
+  font-size: 0.84rem;
+  font-weight: 500;
+  padding: 7px 14px;
+  border-radius: 4px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 7px;
+  transition: color 150ms ease-out, background-color 150ms ease-out;
+}
+.work-tab span {
+  font-size: 0.72rem;
+  color: var(--dim);
+  font-variant-numeric: tabular-nums;
+}
+.work-tab:hover {
+  color: var(--ink);
+}
+.work-tab[aria-current="true"] {
+  background: rgba(243, 239, 232, 0.11);
+  color: var(--ink);
+}
+.work-tab[aria-current="true"] span {
+  color: var(--accent);
+}
+
+.contact-link {
+  pointer-events: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 15px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 500;
+  text-decoration: none;
+  transition: border-color 150ms ease-out, background-color 150ms ease-out;
+}
+.contact-link:hover {
+  border-color: var(--line-strong);
+  background: rgba(243, 239, 232, 0.08);
+}
+.contact-link svg {
+  width: 14px;
+  height: 14px;
+  fill: var(--accent);
+}
+
+/* ── Левый нижний блок: крупный титул скульптуры и контекст ── */
+.plaque {
+  position: fixed;
+  left: calc(var(--pad) + 20px);
+  bottom: calc(var(--pad) + 18px);
+  z-index: 5;
+  max-width: min(460px, 44vw);
+  pointer-events: none;
+}
+
+.plaque-index {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  color: var(--accent);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 8px;
+}
+.plaque-index::after {
+  content: '';
+  width: 36px;
+  height: 1px;
+  background: rgba(224, 139, 67, 0.45);
+}
+
+.plaque-title {
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: clamp(2.1rem, 4.8vw, 4.2rem);
+  line-height: 0.96;
+  letter-spacing: -0.04em;
+  color: var(--ink);
+  margin-bottom: 12px;
+  transition: opacity 260ms var(--ease-out), transform 260ms var(--ease-out);
+}
+
+.plaque-desc {
+  color: var(--muted);
+  font-size: clamp(0.9rem, 1vw, 0.98rem);
+  line-height: 1.55;
+  max-width: 40ch;
+  text-wrap: pretty;
+  transition: opacity 260ms var(--ease-out), transform 260ms var(--ease-out);
+}
+
+.plaque.is-switching .plaque-title,
+.plaque.is-switching .plaque-desc {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+/* ── Правый нижний пульт: режимы шейдинга + телеметрия сетки + стрелки ── */
+.dock {
+  position: fixed;
+  right: calc(var(--pad) + 20px);
+  bottom: calc(var(--pad) + 18px);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 14px;
+}
+
+.telemetry {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 10px 16px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font-variant-numeric: tabular-nums;
+}
+.telemetry-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.telemetry-item dt {
+  font-size: 0.68rem;
+  color: var(--dim);
+}
+.telemetry-item dd {
+  font-size: 0.84rem;
+  font-weight: 500;
+  color: var(--ink);
+}
+
+.controls-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.shader-switch {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+.shader-btn {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-family: var(--f-sans);
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 140ms ease-out, background-color 140ms ease-out;
+}
+.shader-btn:hover {
+  color: var(--ink);
+}
+.shader-btn[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--bg);
+}
+
+.step-nav {
+  display: inline-flex;
+  gap: 4px;
+}
+.step-btn {
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  cursor: pointer;
+  transition: border-color 140ms ease-out, background-color 140ms ease-out;
+}
+.step-btn:hover {
+  border-color: var(--line-strong);
+  background: rgba(243, 239, 232, 0.1);
+}
+.step-btn svg {
+  width: 14px;
+  height: 14px;
+  stroke: currentColor;
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── Подсказка по вращению по центру снизу ── */
+.orbit-hint {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--pad) + 22px);
+  transform: translateX(-50%);
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  background: rgba(22, 20, 18, 0.65);
+  border: 1px solid rgba(243, 239, 232, 0.08);
+  color: var(--muted);
+  font-size: 0.76rem;
+  pointer-events: none;
+  transition: opacity 400ms var(--ease-out);
+}
+.orbit-hint.is-hidden {
+  opacity: 0;
+}
+.orbit-hint svg {
+  width: 13px;
+  height: 13px;
+  stroke: var(--accent);
+  fill: none;
+  stroke-width: 1.6;
+}
+
+/* ── Индикатор загрузки модели ── */
+.loader {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+  transition: opacity 350ms var(--ease-out), visibility 350ms;
+}
+.loader.is-done {
+  opacity: 0;
+  visibility: hidden;
+}
+.loader-bar {
+  width: 120px;
+  height: 2px;
+  background: rgba(243, 239, 232, 0.12);
+  overflow: hidden;
+}
+.loader-fill {
+  width: 100%;
+  height: 100%;
+  background: var(--accent);
+  transform-origin: 0 50%;
+  transform: scaleX(var(--p, 0.15));
+  transition: transform 150ms ease-out;
+}
+.loader-label {
+  font-size: 0.76rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Адаптация под планшеты и телефоны ── */
+@media (max-width: 920px) {
+  .orbit-hint {
+    display: none;
+  }
+  .topbar {
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    gap: 10px;
+  }
+  .brand-meta {
+    display: none;
+  }
+  .work-tabs {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+  }
+  .work-tab {
+    flex: 1;
+    justify-content: center;
+    padding: 6px 8px;
+    font-size: 0.78rem;
+  }
+  .plaque {
+    left: calc(var(--pad) + 12px);
+    right: calc(var(--pad) + 12px);
+    bottom: 138px;
+    max-width: none;
+  }
+  .plaque-title {
+    font-size: clamp(1.75rem, 7vw, 2.4rem);
+    margin-bottom: 6px;
+  }
+  .plaque-desc {
+    font-size: 0.85rem;
+    max-width: 46ch;
+  }
+  .dock {
+    left: calc(var(--pad) + 12px);
+    right: calc(var(--pad) + 12px);
+    bottom: calc(var(--pad) + 10px);
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .telemetry {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+</style>
+</head>
+<body>
+
+<div class="backdrop" id="backdrop" aria-hidden="true"></div>
+<div class="grain" aria-hidden="true"></div>
+<div class="reticle" aria-hidden="true"></div>
+
+<div id="stage" role="region" aria-label="Интерактивная 3D-сцена. Потяните мышью или пальцем, чтобы рассмотреть модель со всех сторон"></div>
+
+<div class="loader" id="loader" aria-live="polite">
+  <div class="loader-bar"><div class="loader-fill" id="loader-fill"></div></div>
+  <span class="loader-label" id="loader-label">Загрузка геометрии</span>
+</div>
+
+<header class="topbar">
+  <a class="brand" href="#piece-0" id="brand-home">
+    <span class="brand-name">Алексей Кед</span>
+    <span class="brand-meta">3D-художник · Минск</span>
+  </a>
+
+  <nav class="work-tabs" id="work-tabs" aria-label="Экспозиция работ">
+    <button class="work-tab" type="button" data-index="0" aria-current="true">
+      <span>01</span>Свеча
+    </button>
+    <button class="work-tab" type="button" data-index="1" aria-current="false">
+      <span>02</span>Персонаж
+    </button>
+    <button class="work-tab" type="button" data-index="2" aria-current="false">
+      <span>03</span>Шлем
+    </button>
+  </nav>
+
+  <a class="contact-link" href="https://t.me/thomust" target="_blank" rel="noopener">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.9 4.3 18.6 20c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-4.9 9-8.1c.4-.3-.1-.5-.6-.2L6.2 13.1 1.4 11.6c-1-.3-1-1 .2-1.5L20.3 3c.9-.3 1.7.2 1.6 1.3z"/></svg>
+    @thomust
+  </a>
+</header>
+
+<section class="plaque" id="plaque" aria-live="polite">
+  <div class="plaque-index" id="plaque-index">01 / 03</div>
+  <h1 class="plaque-title" id="plaque-title">Свеча</h1>
+  <p class="plaque-desc" id="plaque-desc">Оплавленный восковой столбик с потёками в широком бронзовом блюдце. Контраст тонкой вертикали и тяжёлого основания.</p>
+</section>
+
+<div class="orbit-hint" id="orbit-hint" aria-hidden="true">
+  <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3.6 9h16.8M3.6 15h16.8M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+  Вращайте модель мышью · листайте колесом
+</div>
+
+<aside class="dock" aria-label="Инструменты осмотра">
+  <dl class="telemetry">
+    <div class="telemetry-item">
+      <dt>Треугольники</dt>
+      <dd id="stat-tris">149 108</dd>
+    </div>
+    <div class="telemetry-item">
+      <dt>Меши</dt>
+      <dd id="stat-meshes">3</dd>
+    </div>
+    <div class="telemetry-item">
+      <dt>Файл FBX</dt>
+      <dd id="stat-size">3.1 МБ</dd>
+    </div>
+  </dl>
+
+  <div class="controls-row">
+    <div class="shader-switch" role="group" aria-label="Режим отображения">
+      <button class="shader-btn" type="button" data-mode="studio" aria-pressed="true">Материал</button>
+      <button class="shader-btn" type="button" data-mode="clay" aria-pressed="false">Глина</button>
+      <button class="shader-btn" type="button" data-mode="wire" aria-pressed="false">Сетка</button>
+    </div>
+
+    <div class="step-nav">
+      <button class="step-btn" type="button" id="prev-btn" aria-label="Предыдущая работа">
+        <svg viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></svg>
+      </button>
+      <button class="step-btn" type="button" id="next-btn" aria-label="Следующая работа">
+        <svg viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg>
+      </button>
+    </div>
+  </div>
+</aside>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import * as BufferGeometryUtils from 'three/addons/utils/BufferGeometryUtils.js';
+
+const WORKS = [
+  {
+    id: 'candle',
+    file: 'tvia2s1.fbx',
+    index: '01 / 03',
+    title: 'Свеча',
+    desc: 'Оплавленный восковой столбик с потёками в широком бронзовом блюдце. Контраст тонкой вертикали и тяжёлого основания.',
+    camDir: [0.58, 0.28, 1.0],
+    fill: 0.72,
+    spot: ['54%', '42%'],
+  },
+  {
+    id: 'sculpt',
+    file: 'EwanLow.fbx',
+    index: '02 / 03',
+    title: 'Персонаж',
+    desc: 'Анатомическая болванка головы и плечевого пояса. Проверка посадки черепа, надбровных дуг и силуэта шеи в полном обороте.',
+    camDir: [0.52, 0.16, 1.0],
+    fill: 0.70,
+    spot: ['48%', '46%'],
+  },
+  {
+    id: 'helm',
+    file: 'hatlow.fbx',
+    index: '03 / 03',
+    title: 'Шлем',
+    desc: 'Кованый купол с парой изогнутых рогов и рваной нижней кромкой. Скульптурная проработка вмятин и фактуры.',
+    camDir: [0.62, 0.24, 1.0],
+    fill: 0.72,
+    spot: ['52%', '44%'],
+  },
+];
+
+const TARGET_SIZE = 2.2;
+const IS_FILE = location.protocol === 'file:';
+const REDUCE_MOTION = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+if (IS_FILE && !window.__MODELS__) {
+  await new Promise((resolve) => {
+    const s = document.createElement('script');
+    s.src = './models.js';
+    s.onload = resolve;
+    s.onerror = resolve;
+    document.head.appendChild(s);
+  });
+}
+
+async function fetchBuffer(path, onProgress) {
+  if (IS_FILE && window.__MODELS__ && window.__MODELS__[path]) {
+    onProgress?.(1);
+    const bin = atob(window.__MODELS__[path]);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
+  const res = await fetch(path);
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const total = Number(res.headers.get('content-length')) || 0;
+  if (!total || !onProgress || !res.body) return res.arrayBuffer();
+
+  const reader = res.body.getReader();
+  const chunks = [];
+  let loaded = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+    loaded += value.length;
+    onProgress(loaded / total);
+  }
+  const merged = new Uint8Array(loaded);
+  let off = 0;
+  for (const c of chunks) {
+    merged.set(c, off);
+    off += c.length;
+  }
+  return merged.buffer;
+}
+
+/* ── Физически убедительные материалы для каждой модели и режима ── */
+const CLAY_MAT = new THREE.MeshStandardMaterial({
+  color: new THREE.Color('#c89d7c'),
+  roughness: 0.56,
+  metalness: 0.04,
+  envMapIntensity: 0.9,
+});
+
+const WIRE_MAT = new THREE.MeshBasicMaterial({
+  color: new THREE.Color('#e08b43'),
+  wireframe: true,
+  transparent: true,
+  opacity: 0.72,
+});
+
+function buildStudioMaterial(workId, meshName) {
+  const n = (meshName || '').toLowerCase();
+  if (workId === 'candle') {
+    // Тарелка-подсвечник: тёмная патинированная бронза
+    if (n.includes('cube002')) {
+      return new THREE.MeshPhysicalMaterial({
+        color: new THREE.Color('#4a3828'),
+        roughness: 0.34,
+        metalness: 0.78,
+        clearcoat: 0.18,
+        clearcoatRoughness: 0.35,
+        envMapIntensity: 1.4,
+      });
+    }
+    // Фитиль: обугленный тёмный кончик
+    if (n.includes('cylinder001')) {
+      return new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#1f1916'),
+        roughness: 0.9,
+        metalness: 0.0,
+      });
+    }
+    // Тело свечи: тёплый слоновый воск с мягким шелковистым отблеском
+    return new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color('#efe4cf'),
+      emissive: new THREE.Color('#3a1c06'),
+      emissiveIntensity: 0.14,
+      roughness: 0.42,
+      metalness: 0.0,
+      transmission: 0.08,
+      thickness: 0.6,
+      clearcoat: 0.12,
+      clearcoatRoughness: 0.4,
+      envMapIntensity: 1.0,
+    });
+  }
+
+  if (workId === 'sculpt') {
+    // Скульптурный бюст: благородный тёплый известняк / гипс с тонким микрорельефом света
+    return new THREE.MeshPhysicalMaterial({
+      color: new THREE.Color('#dcd0be'),
+      roughness: 0.48,
+      metalness: 0.02,
+      sheen: 0.25,
+      sheenRoughness: 0.6,
+      sheenColor: new THREE.Color('#ffe3c4'),
+      clearcoat: 0.06,
+      envMapIntensity: 1.15,
+    });
+  }
+
+  // Шлем с рогами: тёмная кованая сталь / состаренная кость с металлическим отливом на гранях
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#a89984'),
+    roughness: 0.38,
+    metalness: 0.42,
+    clearcoat: 0.2,
+    clearcoatRoughness: 0.32,
+    envMapIntensity: 1.35,
+  });
+}
+
+/* ── Инициализация единой сцены ── */
+const host = document.getElementById('stage');
+const renderer = new THREE.WebGLRenderer({
+  antialias: true,
+  alpha: true,
+  powerPreference: 'high-performance',
+});
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+renderer.setSize(host.clientWidth || innerWidth, host.clientHeight || innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.12;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+host.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(
+  32,
+  (host.clientWidth || innerWidth) / (host.clientHeight || innerHeight),
+  0.01,
+  150
+);
+
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.055;
+controls.rotateSpeed = 0.78;
+controls.enableZoom = false;
+controls.enablePan = false;
+controls.minPolarAngle = 0.28;
+controls.maxPolarAngle = Math.PI * 0.54;
+controls.autoRotate = !REDUCE_MOTION;
+controls.autoRotateSpeed = 0.48;
+
+const pmrem = new THREE.PMREMGenerator(renderer);
+const roomEnv = new RoomEnvironment();
+scene.environment = pmrem.fromScene(roomEnv, 0.04).texture;
+roomEnv.dispose?.();
+pmrem.dispose();
+
+// Трёхточечный студийный свет
+const keyLight = new THREE.DirectionalLight(0xfff0dc, 2.8);
+keyLight.position.set(3.4, 5.4, 3.8);
+keyLight.castShadow = true;
+keyLight.shadow.mapSize.set(2048, 2048);
+keyLight.shadow.camera.near = 0.5;
+keyLight.shadow.camera.far = 22;
+keyLight.shadow.camera.left = -3.2;
+keyLight.shadow.camera.right = 3.2;
+keyLight.shadow.camera.top = 3.2;
+keyLight.shadow.camera.bottom = -3.2;
+keyLight.shadow.bias = -0.0008;
+keyLight.shadow.radius = 4;
+scene.add(keyLight);
+
+const rimLight = new THREE.DirectionalLight(0xff9d47, 2.1);
+rimLight.position.set(-4.6, 2.5, -4.2);
+scene.add(rimLight);
+
+const fillLight = new THREE.DirectionalLight(0x9cb8d9, 0.75);
+fillLight.position.set(-3.0, 1.2, 3.4);
+scene.add(fillLight);
+
+// Тёплый локальный огонёк для свечи
+const candleFlameLight = new THREE.PointLight(0xff9436, 1.6, 4.5, 1.8);
+candleFlameLight.position.set(0, 1.15, 0.15);
+scene.add(candleFlameLight);
+
+// Пол для глубокой мягкой тени
+const ground = new THREE.Mesh(
+  new THREE.PlaneGeometry(28, 28),
+  new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.48 })
+);
+ground.rotation.x = -Math.PI / 2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+
+
+/* ── Кэш загруженных моделей и управление состоянием ── */
+const cache = new Map();
+let activeIndex = 0;
+let currentMode = 'studio';
+let currentEntry = null;
+let loadToken = 0;
+
+// Плавный полёт камеры при смене модели
+const camAnim = {
+  active: false,
+  startPos: new THREE.Vector3(),
+  endPos: new THREE.Vector3(),
+  startTarget: new THREE.Vector3(),
+  endTarget: new THREE.Vector3(),
+  t0: 0,
+  duration: 680,
+};
+
+function dropHelpers(root) {
+  const items = [];
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry) return;
+    const g = o.geometry;
+    if (!g.boundingBox) g.computeBoundingBox();
+    const b = g.boundingBox.clone().applyMatrix4(o.matrixWorld);
+    const s = b.getSize(new THREE.Vector3());
+    items.push({
+      mesh: o,
+      vol: Math.max(s.x * s.y * s.z, 0),
+      verts: g.attributes.position ? g.attributes.position.count : 0,
+    });
+  });
+  if (items.length < 2) return;
+  const vols = items.map((i) => i.vol).filter((v) => v > 0).sort((a, b) => a - b);
+  if (!vols.length) return;
+  const median = vols[Math.floor(vols.length / 2)];
+  if (!median) return;
+  items.forEach((i) => {
+    if (i.vol > median * 40 || (i.verts <= 32 && i.vol > median * 8)) {
+      i.mesh.visible = false;
+    }
+  });
+}
+
+function contentBox(root) {
+  const box = new THREE.Box3();
+  root.updateWorldMatrix(true, true);
+  root.traverse((o) => {
+    if (o.isMesh && o.visible && o.geometry) {
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      box.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld));
+    }
+  });
+  if (box.isEmpty()) box.setFromObject(root);
+  return box;
+}
+
+function prepareModel(fbx, work) {
+  dropHelpers(fbx);
+
+  let tris = 0;
+  let meshes = 0;
+
+  fbx.traverse((o) => {
+    if (!o.isMesh || !o.visible || !o.geometry) return;
+    let g = o.geometry;
+    meshes++;
+    tris += (g.index ? g.index.count : (g.attributes.position?.count || 0)) / 3;
+    // В свече атрибут vertex color залит единицами, но может сбивать шейдер — очищаем
+    if (g.attributes.color) g.deleteAttribute('color');
+    // Склеиваем вершины и считаем сглаженные нормали только для высокополигональной свечи;
+    // у лоу-поли скульптов (Персонаж, Шлем) сохраняем авторские группы сглаживания и острые грани из FBX
+    if (work.id === 'candle') {
+      g = BufferGeometryUtils.mergeVertices(g, 1e-4);
+      g.computeVertexNormals();
+      o.geometry = g;
+    }
+
+    const studioMat = buildStudioMaterial(work.id, o.name);
+    o.userData.studioMat = studioMat;
+    o.material = studioMat;
+    o.castShadow = true;
+    o.receiveShadow = true;
+    o.frustumCulled = false;
+  });
+
+  let box = contentBox(fbx);
+  const size = box.getSize(new THREE.Vector3());
+  const maxDim = Math.max(size.x, size.y, size.z) || 1;
+  fbx.scale.setScalar(TARGET_SIZE / maxDim);
+
+  box = contentBox(fbx);
+  const center = box.getCenter(new THREE.Vector3());
+  fbx.position.sub(center);
+
+  box = contentBox(fbx);
+  return {
+    root: fbx,
+    tris: Math.round(tris),
+    meshes,
+    minY: box.min.y,
+    maxY: box.max.y,
+  };
+}
+
+function applyShadingMode(entry, mode) {
+  if (!entry) return;
+  entry.root.traverse((o) => {
+    if (!o.isMesh || !o.visible) return;
+    if (mode === 'wire') {
+      o.material = WIRE_MAT;
+    } else if (mode === 'clay') {
+      o.material = CLAY_MAT;
+    } else {
+      o.material = o.userData.studioMat;
+    }
+  });
+}
+
+function computeCameraPose(entry, work) {
+  const box = contentBox(entry.root);
+  const corners = [];
+  for (const x of [box.min.x, box.max.x])
+    for (const y of [box.min.y, box.max.y])
+      for (const z of [box.min.z, box.max.z])
+        corners.push(new THREE.Vector3(x, y, z));
+
+  const dir = new THREE.Vector3(...work.camDir).normalize();
+  const w = host.clientWidth || innerWidth;
+  const h = host.clientHeight || innerHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+
+  const fill = camera.aspect < 0.85 ? 0.64 : work.fill;
+  const tempCam = camera.clone();
+
+  let d = (box.getBoundingSphere(new THREE.Sphere()).radius || 1) * 2.5;
+  for (let i = 0; i < 10; i++) {
+    tempCam.position.copy(dir).multiplyScalar(d);
+    tempCam.lookAt(0, 0, 0);
+    tempCam.updateMatrixWorld(true);
+    let m = 0;
+    for (const c of corners) {
+      const p = c.clone().project(tempCam);
+      m = Math.max(m, Math.abs(p.x), Math.abs(p.y));
+    }
+    if (!isFinite(m) || m <= 0) break;
+    const next = d * (m / fill);
+    if (Math.abs(next - d) < 0.0005) {
+      d = next;
+      break;
+    }
+    d = next;
+  }
+
+  const fovRad = THREE.MathUtils.degToRad(camera.fov);
+  const frameH = 2 * d * Math.tan(fovRad / 2);
+  // На мобильных поднимаем модель чуть выше нижней карточки
+  const lift = camera.aspect < 0.85 ? frameH * 0.08 : frameH * 0.02;
+
+  const target = new THREE.Vector3(0, -lift, 0);
+  const pos = dir.multiplyScalar(d);
+  pos.y -= lift;
+
+  return { pos, target, d };
+}
+
+/* ── Элементы интерфейса ── */
+const loaderEl = document.getElementById('loader');
+const loaderFill = document.getElementById('loader-fill');
+const loaderLabel = document.getElementById('loader-label');
+const plaqueEl = document.getElementById('plaque');
+const plaqueIndex = document.getElementById('plaque-index');
+const plaqueTitle = document.getElementById('plaque-title');
+const plaqueDesc = document.getElementById('plaque-desc');
+const statTris = document.getElementById('stat-tris');
+const statMeshes = document.getElementById('stat-meshes');
+const statSize = document.getElementById('stat-size');
+const tabBtns = [...document.querySelectorAll('.work-tab')];
+const shaderBtns = [...document.querySelectorAll('.shader-btn')];
+const orbitHint = document.getElementById('orbit-hint');
+
+const nf = new Intl.NumberFormat('ru-RU');
+const fmtTris = (n) => nf.format(n).replace(/\u00A0/g, ' ');
+const fmtBytes = (b) => (b > 1048576 ? (b / 1048576).toFixed(1) + ' МБ' : Math.round(b / 1024) + ' КБ');
+
+controls.addEventListener('start', () => {
+  orbitHint.classList.add('is-hidden');
+});
+
+async function loadWorkEntry(index, onProgress) {
+  const work = WORKS[index];
+  if (cache.has(work.id)) {
+    onProgress?.(1);
+    return cache.get(work.id);
+  }
+  const buf = await fetchBuffer(work.file, onProgress);
+  const parsed = new FBXLoader().parse(buf, '');
+  const entry = {
+    ...prepareModel(parsed, work),
+    bytes: buf.byteLength,
+  };
+  cache.set(work.id, entry);
+  return entry;
+}
+
+async function activateWork(index, immediate = false) {
+  const nextIndex = (index + WORKS.length) % WORKS.length;
+  if (nextIndex === activeIndex && currentEntry && !immediate) return;
+
+  activeIndex = nextIndex;
+  const work = WORKS[activeIndex];
+  const myToken = ++loadToken;
+
+  // Обновляем табы и позицию фонового пятна света
+  tabBtns.forEach((btn, i) => btn.setAttribute('aria-current', String(i === activeIndex)));
+  document.documentElement.style.setProperty('--spot-x', work.spot[0]);
+  document.documentElement.style.setProperty('--spot-y', work.spot[1]);
+
+  // Обновляем титры
+  plaqueEl.classList.add('is-switching');
+  setTimeout(() => {
+    plaqueIndex.textContent = work.index;
+    plaqueTitle.textContent = work.title;
+    plaqueDesc.textContent = work.desc;
+    plaqueEl.classList.remove('is-switching');
+  }, immediate ? 0 : 160);
+
+  if (!cache.has(work.id)) {
+    loaderEl.classList.remove('is-done');
+    loaderFill.style.setProperty('--p', '0.1');
+    loaderLabel.textContent = 'Загрузка ' + work.title.toLowerCase();
+  }
+
+  try {
+    const entry = await loadWorkEntry(activeIndex, (p) => {
+      if (myToken !== loadToken) return;
+      loaderFill.style.setProperty('--p', Math.max(0.1, p).toFixed(2));
+    });
+    if (myToken !== loadToken) return;
+
+    loaderEl.classList.add('is-done');
+
+    if (currentEntry && currentEntry.root.parent === scene) {
+      scene.remove(currentEntry.root);
+    }
+
+    currentEntry = entry;
+    applyShadingMode(entry, currentMode);
+    scene.add(entry.root);
+
+    ground.position.y = entry.minY - 0.004;
+    candleFlameLight.visible = work.id === 'candle';
+    if (work.id === 'candle') {
+      candleFlameLight.position.set(0, entry.maxY + 0.18, 0.12);
+    }
+
+    statTris.textContent = fmtTris(entry.tris);
+    statMeshes.textContent = String(entry.meshes);
+    statSize.textContent = fmtBytes(entry.bytes);
+
+    const pose = computeCameraPose(entry, work);
+    camera.near = Math.max(pose.d / 500, 0.001);
+    camera.far = pose.d * 14;
+    camera.updateProjectionMatrix();
+
+    if (immediate || REDUCE_MOTION) {
+      camAnim.active = false;
+      camera.position.copy(pose.pos);
+      controls.target.copy(pose.target);
+      controls.update();
+    } else {
+      camAnim.startPos.copy(camera.position);
+      camAnim.endPos.copy(pose.pos);
+      camAnim.startTarget.copy(controls.target);
+      camAnim.endTarget.copy(pose.target);
+      camAnim.t0 = performance.now();
+      camAnim.active = true;
+    }
+
+    renderer.render(scene, camera);
+
+    // В фоне тихо подгружаем остальные модели, чтобы переключение было мгновенным
+    preloadRemaining();
+  } catch (err) {
+    loaderLabel.textContent = 'Ошибка загрузки модели';
+  }
+}
+
+let preloadingStarted = false;
+async function preloadRemaining() {
+  if (preloadingStarted) return;
+  preloadingStarted = true;
+  for (let i = 0; i < WORKS.length; i++) {
+    if (!cache.has(WORKS[i].id)) {
+      try {
+        await loadWorkEntry(i);
+      } catch {}
+    }
+  }
+}
+
+/* ── Переключатели работ, шейдера, колеса и клавиатуры ── */
+tabBtns.forEach((btn) => {
+  btn.addEventListener('click', () => activateWork(Number(btn.dataset.index)));
+});
+
+document.getElementById('brand-home').addEventListener('click', (e) => {
+  e.preventDefault();
+  activateWork(0);
+});
+
+document.getElementById('prev-btn').addEventListener('click', () => activateWork(activeIndex - 1));
+document.getElementById('next-btn').addEventListener('click', () => activateWork(activeIndex + 1));
+
+shaderBtns.forEach((btn) => {
+  btn.addEventListener('click', () => {
+    currentMode = btn.dataset.mode;
+    shaderBtns.forEach((b) => b.setAttribute('aria-pressed', String(b === btn)));
+    applyShadingMode(currentEntry, currentMode);
+    renderer.render(scene, camera);
+  });
+});
+
+window.addEventListener('keydown', (e) => {
+  const t = e.target;
+  if (t && t.closest && t.closest('input,textarea')) return;
+  if (['ArrowRight', 'ArrowDown', 'PageDown'].includes(e.key)) {
+    e.preventDefault();
+    activateWork(activeIndex + 1);
+  } else if (['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) {
+    e.preventDefault();
+    activateWork(activeIndex - 1);
+  } else if (e.key === '1') activateWork(0);
+  else if (e.key === '2') activateWork(1);
+  else if (e.key === '3') activateWork(2);
+});
+
+// Колесо мыши / тачпад: один жест = одна смена скульптуры
+let wheelAcc = 0;
+let lastWheelTime = 0;
+let wheelArmed = true;
+
+window.addEventListener('wheel', (e) => {
+  if (e.ctrlKey) return;
+  e.preventDefault();
+  const now = performance.now();
+  if (now - lastWheelTime > 150) {
+    wheelAcc = 0;
+    wheelArmed = true;
+  }
+  lastWheelTime = now;
+  if (!wheelArmed) return;
+
+  wheelAcc += e.deltaY;
+  if (Math.abs(wheelAcc) < 42) return;
+
+  wheelArmed = false;
+  activateWork(activeIndex + (wheelAcc > 0 ? 1 : -1));
+  wheelAcc = 0;
+}, { passive: false });
+
+// Реакция ключевого света на движение курсора (rAF-throttled)
+let ptrX = 0;
+let ptrY = 0;
+let ptrRaf = 0;
+
+window.addEventListener('pointermove', (e) => {
+  ptrX = (e.clientX / innerWidth - 0.5) * 2;
+  ptrY = (e.clientY / innerHeight - 0.5) * 2;
+  if (ptrRaf) return;
+  ptrRaf = requestAnimationFrame(() => {
+    ptrRaf = 0;
+    keyLight.position.x = 3.4 + ptrX * 0.9;
+    keyLight.position.y = 5.4 - ptrY * 0.6;
+  });
+}, { passive: true });
+
+// Ресайз окна
+const ro = new ResizeObserver(() => {
+  const w = host.clientWidth || innerWidth;
+  const h = host.clientHeight || innerHeight;
+  if (!w || !h) return;
+  renderer.setSize(w, h);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  if (currentEntry) {
+    const pose = computeCameraPose(currentEntry, WORKS[activeIndex]);
+    camera.position.copy(pose.pos);
+    controls.target.copy(pose.target);
+    controls.update();
+    renderer.render(scene, camera);
+  }
+});
+ro.observe(host);
+
+// Главный цикл рендера
+function easeOutQuart(x) {
+  return 1 - Math.pow(1 - x, 4);
+}
+
+function tick(now) {
+  requestAnimationFrame(tick);
+  if (document.hidden) return;
+
+  if (camAnim.active) {
+    const t = Math.min(1, (now - camAnim.t0) / camAnim.duration);
+    const k = easeOutQuart(t);
+    camera.position.lerpVectors(camAnim.startPos, camAnim.endPos, k);
+    controls.target.lerpVectors(camAnim.startTarget, camAnim.endTarget, k);
+    if (t >= 1) camAnim.active = false;
+  }
+
+  controls.update();
+  renderer.render(scene, camera);
+}
+
+await activateWork(0, true);
+requestAnimationFrame(tick);
+
+if (new URLSearchParams(location.search).has('debug')) {
+  window.__studio = {
+    scene,
+    camera,
+    renderer,
+    controls,
+    cache,
+    activateWork,
+    get state() {
+      return { activeIndex, currentMode, loaded: [...cache.keys()] };
+    },
+  };
+}
+</script>
+
+</body>
+</html>
